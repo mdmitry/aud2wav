@@ -25,7 +25,7 @@ Usage: aud2wav [-o out1.wav] [-b <blocksize> | -d | -4] <input1.aud> [input2.aud
 
 ### Example:
 
-Convert all AUD files in the current directory to IMA ADPCM WAV files, while creating a `aud2wav.log.txt` log file:
+Convert all AUD files in the current directory to IMA ADPCM WAV files, while creating an `aud2wav.log.txt` log file:
 ```
 aud2wav *.aud *.var *. *.v0? *.juv 2> aud2wav.log.txt
 ```
@@ -46,17 +46,33 @@ The `-4` parameter allows comparing 4 different decoding algorithms:
 0. The original Westwood algorithm, taken from the [official source code release](https://github.com/electronicarts/CnC_Remastered_Collection) of Red Alert. While the [ADPCM.CPP](https://github.com/electronicarts/CnC_Remastered_Collection/blob/master/REDALERT/ADPCM.CPP) is not used directly, it is included for reference. This algorithm uses large pre-calculated lookup tables [DTABLE.CPP](https://github.com/electronicarts/CnC_Remastered_Collection/blob/master/REDALERT/DTABLE.CPP) and [ITABLE.CPP](https://github.com/electronicarts/CnC_Remastered_Collection/blob/master/REDALERT/ITABLE.CPP) (8544 bytes total), and is the fastest.
 1. Found this algorithm somewhere on the internet years ago, needs only 186 bytes of lookup tables. Its output turns out to be identical to the #0 algorithm, as well as Windows ACM (used by sndrec32.exe from Windows 95 to XP), [ADPCM-XQ](https://github.com/dbry/adpcm-xq/blob/master/adpcm-lib.c#L949), [libsndfile](https://github.com/libsndfile/libsndfile/blob/master/src/ima_adpcm.c#L306) (used by [Audacity](https://www.audacityteam.org/)), [SoX](https://github.com/chirlu/sox/blob/master/src/ima_rw.c#L110), [vgmstream](https://github.com/vgmstream/vgmstream/blob/master/src/coding/ima_decoder.c#L62), and probably many more.
 2. One of my attempts to "optimize" the #1 algorithm to use less instructions. Later I've found it in [vgmstream](https://github.com/vgmstream/vgmstream/blob/master/src/coding/ima_decoder.c#L161) used in one videogame.
-3. Another attempt to "optimize" the #1 algorithm. It is included in [ffmpeg](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/adpcm.c#L419) (used by [VLC](https://www.videolan.org/), [LAVFilters](https://github.com/Nevcairiel/LAVFilters) and other softwares), and in [vgmstream](https://github.com/vgmstream/vgmstream/blob/master/src/coding/ima_decoder.c#L117) in yet another function.
+3. Another attempt to "optimize" the #1 algorithm. It is included in [ffmpeg](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/adpcm.c#L419) (used by [VLC](https://www.videolan.org/), [LAVFilters](https://github.com/Nevcairiel/LAVFilters) and lots of other software), and in [vgmstream](https://github.com/vgmstream/vgmstream/blob/master/src/coding/ima_decoder.c#L117) in yet another function.
 
-Here's the ADPCM decoding function with all 4 algorithms in one, selectable by the `use_algorithm` variable:
-```
+Here's the IMA ADPCM decoding function with all 4 algorithms in one, selectable by the `use_algorithm` variable:
+```c
+// Lookup tables for algorithms #1, #2, #3
+
+unsigned short ADPCM_STEP_TABLE[89] = {
+	7,     8,     9,     10,    11,    12,     13,    14,    16,
+	17,    19,    21,    23,    25,    28,     31,    34,    37,
+	41,    45,    50,    55,    60,    66,     73,    80,    88,
+	97,    107,   118,   130,   143,   157,    173,   190,   209,
+	230,   253,   279,   307,   337,   371,    408,   449,   494,
+	544,   598,   658,   724,   796,   876,    963,   1060,  1166,
+	1282,  1411,  1552,  1707,  1878,  2066,   2272,  2499,  2749,
+	3024,  3327,  3660,  4026,  4428,  4871,   5358,  5894,  6484,
+	7132,  7845,  8630,  9493,  10442, 11487,  12635, 13899, 15289,
+	16818, 18500, 20350, 22385, 24623, 27086,  29794, 32767
+};
+char ADPCM_INDEX_ADJUST[8] = { -1, -1, -1, -1, 2, 4, 6, 8 };
+
 int use_algorithm = 0;
 
 void ADPCM_decode_sample(char *index, long *sample, unsigned char nibble) {
 	
 	int diff;
 	
-	if (use_algorithm == 0) { // Algorithm #0: original Westwood, huge precalculated lookup table based
+	if (use_algorithm == 0) { // Algorithm #0: original Westwood, uses large pre-calculated lookup tables
 		
 		int fastindex = (*index << 4) + nibble;
 		diff = DiffTable[fastindex];         // DTABLE.CPP
@@ -76,11 +92,11 @@ void ADPCM_decode_sample(char *index, long *sample, unsigned char nibble) {
 				diff = ((delta * step) >> 2) + (step >> 3);
 				break;
 			
-			case 3:  // Algorithm #3: fully optimized, even worse (very popular)
+			case 3:  // Algorithm #3: fully optimized, even worse
 				diff = ((delta * 2 + 1) * step) >> 3;
 				break;
 			
-			default: // Algorithm #1: using small lookup tables, result is identical to original
+			default: // Algorithm #1: using small lookup tables, result is identical to the original
 				diff = 0;
 				if (delta & 4) diff += step; step >>= 1;
 				if (delta & 2) diff += step; step >>= 1;
@@ -102,25 +118,25 @@ void ADPCM_decode_sample(char *index, long *sample, unsigned char nibble) {
 }
 ```
 
-Here are some examples of decoding AUD files:
+Here are some examples of decoding AUD files with 4 different algorithms, as shown in Audacity, demonstrating the accumulation of errors:
 
-`aud2wav -4 airstrik.aud` (from C&C: Tiberian Dawn)
-![](.github/airstrik.png)
+`aud2wav -4 airstrik.aud`(from C&C: Tiberian Dawn)
+![screenshot](assets/airstrik.png)
 
-`aud2wav -4 target.aud` (from C&C: Tiberian Dawn)
-![](.github/target.png)
+`aud2wav -4 target.aud`(from C&C: Tiberian Dawn)
+![screenshot](assets/target.png)
 
-`aud2wav -4 dron226m.aud` (from C&C: The Covert Operations)
-![](.github/dron226m.png)
+`aud2wav -4 dron226m.aud`(from C&C: The Covert Operations)
+![screenshot](assets/dron226m.png)
 
-`aud2wav -4 bigf226m.aud` (from C&C: Red Alert)
-![](.github/bigf226m.png)
+`aud2wav -4 bigf226m.aud`(from C&C: Red Alert)
+![screenshot](assets/bigf226m.png)
 
-`aud2wav -4 2nd_hand.aud` (from C&C: Red Alert - Counterstrike)
-![](.github/2nd_hand.png)
+`aud2wav -4 2nd_hand.aud`(from C&C: Red Alert - Counterstrike)
+![screenshot](assets/2nd_hand.png)
 
-`aud2wav -4 grndwire.aud` (from C&C: Red Alert - The Aftermath)
-![](.github/grndwire.png)
+`aud2wav -4 grndwire.aud`(from C&C: Red Alert - The Aftermath)
+![screenshot](assets/grndwire.png)
 
-`aud2wav -4 wastelnd.aud` (from C&C: Red Alert - The Aftermath)
-![](.github/wastelnd.png)
+`aud2wav -4 wastelnd.aud`(from C&C: Red Alert - The Aftermath)
+![screenshot](assets/wastelnd.png)
